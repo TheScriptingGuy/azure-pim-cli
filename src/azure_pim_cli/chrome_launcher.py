@@ -26,9 +26,7 @@ from pathlib import Path
 
 DEFAULT_PORT = 9222
 DEFAULT_COPY_PROFILE = Path(r"C:\temp\chrome_pim_profile")
-DEFAULT_START_URL = (
-    "https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade/~/aadgroup"
-)
+DEFAULT_START_URL = "https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade/~/aadgroup"
 
 
 def _chrome_exe() -> str:
@@ -120,9 +118,7 @@ def launch_debug_chrome(
     _kill_chrome()
     time.sleep(1)
 
-    need_copy = (
-        force_profile_refresh or not copy_profile.exists() or not any(copy_profile.iterdir())
-    )
+    need_copy = force_profile_refresh or not copy_profile.exists() or not any(copy_profile.iterdir())
     if need_copy:
         if not src.exists():
             raise RuntimeError(f"source profile not found: {src}")
@@ -133,8 +129,7 @@ def launch_debug_chrome(
         _copy_profile(src, copy_profile)
     else:
         print(
-            f"[chrome] reusing existing profile copy at {copy_profile} "
-            "(pass --refresh-chrome-profile to re-copy).",
+            f"[chrome] reusing existing profile copy at {copy_profile} (pass --refresh-chrome-profile to re-copy).",
             file=sys.stderr,
         )
 
@@ -158,8 +153,7 @@ def launch_debug_chrome(
     print(f"[chrome] waiting for debug port {port}...", file=sys.stderr)
     if not _wait_ready(port):
         raise RuntimeError(
-            f"Chrome debug port {port} not responding after 30s. "
-            "Chrome may be blocked by policy or failed to launch."
+            f"Chrome debug port {port} not responding after 30s. Chrome may be blocked by policy or failed to launch."
         )
     print(f"[chrome] ready at http://localhost:{port}", file=sys.stderr)
     print("[chrome] complete portal sign-in in the new Chrome window if prompted.", file=sys.stderr)
@@ -173,9 +167,7 @@ if __name__ == "__main__":
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
     p.add_argument("--copy-profile", default=str(DEFAULT_COPY_PROFILE))
     p.add_argument("--source-profile", default=None)
-    p.add_argument(
-        "--refresh", action="store_true", help="Re-copy real profile even if target exists."
-    )
+    p.add_argument("--refresh", action="store_true", help="Re-copy real profile even if target exists.")
     p.add_argument("--url", default=DEFAULT_START_URL)
     a = p.parse_args()
     endpoint = launch_debug_chrome(

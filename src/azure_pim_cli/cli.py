@@ -57,15 +57,11 @@ async def _enrich_eligibility(gc: GraphClient, entry: dict, sem: asyncio.Semapho
     req_t = False
     req_mfa = False
 
-    pflt = quote(
-        f"scopeId eq '{gid}' and scopeType eq 'Group' and roleDefinitionId eq '{access_id}'"
-    )
+    pflt = quote(f"scopeId eq '{gid}' and scopeType eq 'Group' and roleDefinitionId eq '{access_id}'")
 
     async with sem:
         grp_task = asyncio.create_task(gc.get(f"/groups/{gid}?$select=id,displayName,description"))
-        assigns_task = asyncio.create_task(
-            gc.get_paged(f"/policies/roleManagementPolicyAssignments?$filter={pflt}")
-        )
+        assigns_task = asyncio.create_task(gc.get_paged(f"/policies/roleManagementPolicyAssignments?$filter={pflt}"))
 
         try:
             grp = await grp_task
@@ -116,9 +112,7 @@ async def fetch_eligibilities(gc: GraphClient, principal_id: str, fetch_workers:
     from urllib.parse import quote
 
     flt = quote(f"principalId eq '{principal_id}'")
-    raw = await gc.get_paged(
-        f"/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter={flt}"
-    )
+    raw = await gc.get_paged(f"/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter={flt}")
     console.print(f"[dim]Found {len(raw)} eligible assignment(s).[/dim]")
 
     sem = asyncio.Semaphore(fetch_workers)
@@ -186,9 +180,7 @@ async def fetch_pending_approvals(gc: GraphClient) -> list[dict]:
                 "groupId": group.get("id") or r.get("groupId") or "",
                 "displayName": group.get("displayName") or "?",
                 "accessId": r.get("accessId") or "member",
-                "requester": principal.get("userPrincipalName")
-                or principal.get("displayName")
-                or "?",
+                "requester": principal.get("userPrincipalName") or principal.get("displayName") or "?",
                 "justification": r.get("justification") or "",
                 "duration": exp.get("duration") or "",
             }
@@ -231,9 +223,7 @@ async def activate(
         body["ticketInfo"] = {"ticketNumber": ticket, "ticketSystem": "Provided"}
 
     try:
-        resp = await gc.post(
-            "/identityGovernance/privilegedAccess/group/assignmentScheduleRequests", body
-        )
+        resp = await gc.post("/identityGovernance/privilegedAccess/group/assignmentScheduleRequests", body)
     except GraphError as e:
         emsg = str(e)
         if re.search(
@@ -259,16 +249,12 @@ async def activate(
         while time.time() < deadline:
             await asyncio.sleep(POLL_INTERVAL)
             try:
-                poll = await gc.get(
-                    f"/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/{req_id}"
-                )
+                poll = await gc.get(f"/identityGovernance/privilegedAccess/group/assignmentScheduleRequests/{req_id}")
                 status = poll.get("status", status)
             except GraphError:
                 break
             remaining = int(deadline - time.time())
-            sys.stderr.write(
-                f"[activate] {item['displayName']}: status={status} ({remaining}s left)\n"
-            )
+            sys.stderr.write(f"[activate] {item['displayName']}: status={status} ({remaining}s left)\n")
             if status in TERMINAL_STATES or status in AWAITING_APPROVAL_STATES:
                 break
         else:
@@ -287,9 +273,7 @@ async def activate(
 async def approve(gc: GraphClient, item: dict, justification: str) -> tuple[str, str]:
     """Approve a pending PIM group request via Graph beta assignmentApprovals steps."""
     try:
-        await gc.approve_pim_group_request(
-            item.get("approvalId") or item["requestId"], justification
-        )
+        await gc.approve_pim_group_request(item.get("approvalId") or item["requestId"], justification)
         return "Approved", ""
     except GraphError as e:
         return "Failed", str(e)
@@ -360,24 +344,15 @@ async def run(args: argparse.Namespace) -> int:
         return await _run_with_client(args, gc, cdp_endpoint)
 
 
-async def _run_with_client(
-    args: argparse.Namespace, gc: GraphClient, cdp_endpoint: str | None
-) -> int:
+async def _run_with_client(args: argparse.Namespace, gc: GraphClient, cdp_endpoint: str | None) -> int:
     me = await fetch_me(gc)
     principal_id = me["id"]
     console.print(f"[dim]User: {me.get('userPrincipalName')} ({principal_id})[/dim]")
 
     # Cache setup — decides whether eligibility fetch is needed at all.
     cached = cache_mod.load()
-    previous: list[dict] | None = (
-        cached["eligible"] if (cached and cached.get("eligible")) else None
-    )
-    use_cache = (
-        not args.approvals_only
-        and cached
-        and not args.refresh
-        and cache_mod.is_fresh(cached, principal_id)
-    )
+    previous: list[dict] | None = cached["eligible"] if (cached and cached.get("eligible")) else None
+    use_cache = not args.approvals_only and cached and not args.refresh and cache_mod.is_fresh(cached, principal_id)
 
     # Fan out top-level fetches: pending, eligibilities, active_ids — all concurrent.
     pending_task: asyncio.Task | None = None
@@ -399,9 +374,7 @@ async def _run_with_client(
 
     pending = await pending_task if pending_task else []
     if pending:
-        console.print(
-            f"[yellow]>> {len(pending)} pending approval(s) awaiting your decision.[/yellow]"
-        )
+        console.print(f"[yellow]>> {len(pending)} pending approval(s) awaiting your decision.[/yellow]")
     elif not args.eligibilities_only:
         console.print("[dim]No pending approvals for you.[/dim]")
 
@@ -416,9 +389,7 @@ async def _run_with_client(
         eligible = cache_mod.mark_new(eligible, previous)
         new_count = sum(1 for e in eligible if e.get("isNew"))
         if new_count:
-            console.print(
-                f"[yellow]>> {new_count} NEW eligible group(s) since last fetch![/yellow]"
-            )
+            console.print(f"[yellow]>> {new_count} NEW eligible group(s) since last fetch![/yellow]")
 
     # Skip groups already active or with in-flight requests (portal-parity).
     # Avoids RoleAssignmentExists / PendingRoleAssignmentRequest on reruns.
@@ -477,9 +448,7 @@ async def _run_with_client(
 
     justification = args.justification
     if not justification:
-        justification = await asyncio.to_thread(
-            lambda: questionary.text("Justification (required):").ask()
-        )
+        justification = await asyncio.to_thread(lambda: questionary.text("Justification (required):").ask())
         if not justification:
             console.print("[red]Justification cannot be empty.[/red]")
             return 1
@@ -518,9 +487,7 @@ async def _run_with_client(
             else:
                 color = "yellow"
             detail = (
-                f" [dim]({r[4]})[/dim]"
-                if r[4] and r[3] not in ("Provisioned", "AlreadyActive", "Approved")
-                else ""
+                f" [dim]({r[4]})[/dim]" if r[4] and r[3] not in ("Provisioned", "AlreadyActive", "Approved") else ""
             )
             console.print(f"[{color}]{r[0]}[/] {r[1]} -> {r[3]}{detail}")
             out.append(r)
@@ -538,18 +505,14 @@ async def _run_with_client(
             f"\n[yellow]{len(acrs_names)} group(s) blocked by step-up MFA "
             "(RoleAssignmentRequestAcrsValidationFailed).[/yellow]"
         )
-        console.print(
-            "[cyan]Auto-priming acrs=c1 via portal (driving one dummy activation)...[/cyan]"
-        )
+        console.print("[cyan]Auto-priming acrs=c1 via portal (driving one dummy activation)...[/cyan]")
 
         new_token: str | None = None
         if cdp_endpoint:
             try:
                 from .acrs_primer import prime_acrs
 
-                new_token = await asyncio.to_thread(
-                    prime_acrs, cdp_endpoint, justification="acrs prime", timeout=180
-                )
+                new_token = await asyncio.to_thread(prime_acrs, cdp_endpoint, justification="acrs prime", timeout=180)
             except Exception as e:
                 console.print(f"[red]Auto-prime failed: {e}[/red]")
 
@@ -565,9 +528,7 @@ async def _run_with_client(
         gc.set_token(new_token)
 
         retry_batch = [(k, i) for k, i in selected if i["displayName"] in acrs_names]
-        console.print(
-            f"[cyan]Retrying {len(retry_batch)} failed activation(s) with primed token...[/cyan]"
-        )
+        console.print(f"[cyan]Retrying {len(retry_batch)} failed activation(s) with primed token...[/cyan]")
         retry_results = await _run_batch(retry_batch)
 
         # Replace old rows with new results
@@ -628,23 +589,15 @@ def _print_summary(results: list[tuple[str, str, str, str, str]]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Activate PIM groups + approve pending PIM requests.")
     p.add_argument("--refresh", action="store_true", help="Bypass 24h cache.")
-    p.add_argument(
-        "--list-only", action="store_true", help="Print eligibilities and pending approvals, exit."
-    )
+    p.add_argument("--list-only", action="store_true", help="Print eligibilities and pending approvals, exit.")
     p.add_argument("--group", help="Regex filter against displayName (both kinds).")
     p.add_argument("--justification", help="Justification text (prompted if omitted).")
-    p.add_argument(
-        "--hours", type=int, default=8, help="Activation duration hours (clamped to policy max)."
-    )
+    p.add_argument("--hours", type=int, default=8, help="Activation duration hours (clamped to policy max).")
     p.add_argument("--ticket", help="Ticket number for policies that require it.")
     p.add_argument("--approvals-only", action="store_true", help="Skip eligibilities feed.")
     p.add_argument("--eligibilities-only", action="store_true", help="Skip pending approvals feed.")
-    p.add_argument(
-        "--headless", action="store_true", help="Run Playwright headless (needs prior login)."
-    )
-    p.add_argument(
-        "--keep-open", action="store_true", help="Keep browser context alive after grabbing token."
-    )
+    p.add_argument("--headless", action="store_true", help="Run Playwright headless (needs prior login).")
+    p.add_argument("--keep-open", action="store_true", help="Keep browser context alive after grabbing token.")
     p.add_argument("--token", help="Skip Playwright; use provided bearer token.")
     p.add_argument(
         "--channel",
@@ -685,8 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--auto-cdp-profile",
         default=str(DEFAULT_COPY_PROFILE),
-        help=f"Target dir for real-profile copy used by --auto-cdp "
-        f"(default {DEFAULT_COPY_PROFILE}).",
+        help=f"Target dir for real-profile copy used by --auto-cdp (default {DEFAULT_COPY_PROFILE}).",
     )
     p.add_argument(
         "--refresh-chrome-profile",
@@ -701,9 +653,7 @@ def main() -> int:
     try:
         return asyncio.run(run(args))
     except TokenExpired:
-        console.print(
-            "[red]Token expired mid-run. Re-run without --token to refresh via Playwright.[/red]"
-        )
+        console.print("[red]Token expired mid-run. Re-run without --token to refresh via Playwright.[/red]")
         return 2
     except PermissionDenied as e:
         console.print(f"[red]Permission denied: {e}[/red]")

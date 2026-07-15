@@ -215,9 +215,7 @@ def grab_token(
     def _accept(candidate: str) -> bool:
         if resource == "azrbac":
             return _is_azrbac_token(candidate)
-        return _has_pim_scope(
-            candidate, require_readwrite=require_readwrite, require_acrs=require_acrs
-        )
+        return _has_pim_scope(candidate, require_readwrite=require_readwrite, require_acrs=require_acrs)
 
     def on_request(request):
         if token_event.is_set():
@@ -482,7 +480,5 @@ if __name__ == "__main__":
     )
     args = p.parse_args()
 
-    tok = grab_token(
-        headless=args.headless, keep_open=args.keep_open, channel=(args.channel or None)
-    )
+    tok = grab_token(headless=args.headless, keep_open=args.keep_open, channel=(args.channel or None))
     print(tok)

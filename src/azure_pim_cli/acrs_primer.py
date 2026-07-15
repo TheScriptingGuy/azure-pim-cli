@@ -30,9 +30,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-ACTIVATION_URL = (
-    "https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade/~/aadgroup"
-)
+ACTIVATION_URL = "https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade/~/aadgroup"
 
 
 def _has_c1(token: str) -> bool:
@@ -113,14 +111,10 @@ def prime_acrs(cdp_endpoint: str, justification: str = "acrs prime", timeout: in
         # Click first grid-row Activate (skip sidebar tab button by scoping to gridcell)
         print("[acrs] clicking first Activate on eligibility row...", file=sys.stderr)
         try:
-            page.locator('[role="gridcell"] button:has-text("Activeren")').first.click(
-                timeout=10_000
-            )
+            page.locator('[role="gridcell"] button:has-text("Activeren")').first.click(timeout=10_000)
         except Exception:
             # Fallback: any visible Activeren, but skip the sidebar tab (has "in-/uitschakelen")
-            btns = page.locator(
-                'button:has-text("Activeren"):not(:has-text("in-/uitschakelen"))'
-            ).all()
+            btns = page.locator('button:has-text("Activeren"):not(:has-text("in-/uitschakelen"))').all()
             if not btns:
                 raise RuntimeError("could not find any Activate button on grid.")
             btns[0].click()

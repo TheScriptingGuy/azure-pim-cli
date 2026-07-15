@@ -15,9 +15,7 @@ class TestCacheDir:
         assert d == fake_localappdata / "pim_activate"
         assert d.exists()
 
-    def test_fallback_to_home_when_no_localappdata(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_fallback_to_home_when_no_localappdata(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         d = cache.cache_dir()

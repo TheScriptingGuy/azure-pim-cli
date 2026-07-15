@@ -28,9 +28,7 @@ class TestKillChrome:
     def test_calls_taskkill(self) -> None:
         with patch("subprocess.run") as mock_run:
             launcher._kill_chrome()
-            mock_run.assert_called_once_with(
-                ["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True
-            )
+            mock_run.assert_called_once_with(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
 
 
 class TestChromeExe:
