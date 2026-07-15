@@ -19,8 +19,8 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
-      - name: Install dev deps
-        run: uv pip install -e ".[dev]"
+      - name: Sync dependencies
+        run: uv sync --extra dev
 
       - name: ruff check
         run: uv run ruff check .
@@ -46,8 +46,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
-      - name: Install dev deps
-        run: uv pip install -e ".[dev]"
+      - name: Sync dependencies
+        run: uv sync --extra dev
 
       - name: pytest
         run: uv run pytest --cov=azure_pim_cli --cov-report=term-missing --cov-fail-under=60
