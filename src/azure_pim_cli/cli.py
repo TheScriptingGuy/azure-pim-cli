@@ -13,6 +13,7 @@ import asyncio
 import re
 import sys
 import time
+from typing import Any
 from datetime import UTC, datetime, timedelta
 
 import questionary
@@ -127,6 +128,8 @@ async def fetch_active_group_ids(gc: GraphClient) -> set[str]:
     pre-activation avoids RoleAssignmentExists / PendingRoleAssignmentRequest.
     Surfaces Graph errors instead of silently returning empty.
     """
+    active_res: Any
+    inflight_res: Any
     active_res, inflight_res = await asyncio.gather(
         gc.list_pim_group_active_assignments(),
         gc.list_pim_group_inflight_requests(),
@@ -382,9 +385,9 @@ async def _run_with_client(args: argparse.Namespace, gc: GraphClient, cdp_endpoi
     if not args.approvals_only:
         if use_cache:
             console.print("[dim]Using cached eligible list. -Refresh to update.[/dim]")
-            eligible = cached["eligible"]
+            eligible = cached["eligible"]  # type: ignore[index]
         else:
-            eligible = await elig_task  # type: ignore[assignment]
+            eligible = await elig_task  # type: ignore[misc]
             cache_mod.save(principal_id, eligible)
         eligible = cache_mod.mark_new(eligible, previous)
         new_count = sum(1 for e in eligible if e.get("isNew"))
