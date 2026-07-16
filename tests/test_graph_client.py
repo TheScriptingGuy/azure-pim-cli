@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Generator
+from typing import AsyncGenerator
 
 import httpx
 import pytest
@@ -16,15 +16,18 @@ from azure_pim_cli.graph_client import (
 
 
 @pytest.fixture(autouse=True)
-def mock_httpx() -> Generator[None, None, None]:
-    with respx.mock:
+async def mock_httpx() -> AsyncGenerator[None, None]:
+    async with respx.mock:
         yield
 
 
 @pytest.fixture()
-def client() -> GraphClient:
+async def client() -> AsyncGenerator[GraphClient, None]:
     c = GraphClient(token="test-token")
-    return c
+    try:
+        yield c
+    finally:
+        await c.aclose()
 
 
 class TestGraphError:
