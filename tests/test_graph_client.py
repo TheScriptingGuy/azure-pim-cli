@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Generator
+
 import httpx
 import pytest
 import respx
@@ -13,15 +15,15 @@ from azure_pim_cli.graph_client import (
 )
 
 
+@pytest.fixture(autouse=True)
+def mock_httpx() -> Generator[None, None, None]:
+    with respx.mock:
+        yield
+
+
 @pytest.fixture()
 def client() -> GraphClient:
     c = GraphClient(token="test-token")
-    # http2=True causes respx to miss the transport intercept; replace with plain client
-    c.client = httpx.AsyncClient(
-        http2=False,
-        timeout=5,
-        headers=dict(c.client.headers),
-    )
     return c
 
 
@@ -54,19 +56,16 @@ class TestPermissionDenied:
 
 
 class TestGraphClientGet:
-    @respx.mock
     async def test_success_returns_json(self, client: GraphClient) -> None:
         respx.get(f"{GRAPH_BASE}/me").mock(return_value=httpx.Response(200, json={"id": "u1"}))
         result = await client.get("/me")
         assert result["id"] == "u1"
 
-    @respx.mock
     async def test_401_raises_token_expired(self, client: GraphClient) -> None:
         respx.get(f"{GRAPH_BASE}/me").mock(return_value=httpx.Response(401))
         with pytest.raises(TokenExpired):
             await client.get("/me")
 
-    @respx.mock
     async def test_403_raises_permission_denied(self, client: GraphClient) -> None:
         body = {"error": {"code": "Forbidden", "message": "Access denied"}}
         respx.get(f"{GRAPH_BASE}/me").mock(return_value=httpx.Response(403, json=body))
@@ -74,7 +73,6 @@ class TestGraphClientGet:
             await client.get("/me")
         assert exc_info.value.status == 403
 
-    @respx.mock
     async def test_500_raises_graph_error(self, client: GraphClient) -> None:
         body = {"error": {"code": "InternalError", "message": "server problem"}}
         respx.get(f"{GRAPH_BASE}/me").mock(return_value=httpx.Response(500, json=body))
@@ -83,20 +81,17 @@ class TestGraphClientGet:
         assert exc_info.value.status == 500
         assert exc_info.value.code == "InternalError"
 
-    @respx.mock
     async def test_empty_200_returns_empty_dict(self, client: GraphClient) -> None:
         respx.get(f"{GRAPH_BASE}/me").mock(return_value=httpx.Response(200, content=b""))
         result = await client.get("/me")
         assert result == {}
 
-    @respx.mock
     async def test_absolute_url_passthrough(self, client: GraphClient) -> None:
         url = "https://graph.microsoft.com/beta/something"
         respx.get(url).mock(return_value=httpx.Response(200, json={"ok": True}))
         result = await client.get(url)
         assert result["ok"] is True
 
-    @respx.mock
     async def test_429_retries_once(self, client: GraphClient) -> None:
         respx.get(f"{GRAPH_BASE}/me").mock(
             side_effect=[
@@ -109,7 +104,6 @@ class TestGraphClientGet:
 
 
 class TestGraphClientGetPaged:
-    @respx.mock
     async def test_single_page(self, client: GraphClient) -> None:
         respx.get(f"{GRAPH_BASE}/items").mock(
             return_value=httpx.Response(200, json={"value": [{"id": "1"}, {"id": "2"}]})
@@ -117,7 +111,6 @@ class TestGraphClientGetPaged:
         result = await client.get_paged("/items")
         assert len(result) == 2
 
-    @respx.mock
     async def test_follows_next_link(self, client: GraphClient) -> None:
         page1_url = f"{GRAPH_BASE}/items"
         page2_url = f"{GRAPH_BASE}/items?$skiptoken=abc"
