@@ -15,7 +15,14 @@ from azure_pim_cli.graph_client import (
 
 @pytest.fixture()
 def client() -> GraphClient:
-    return GraphClient(token="test-token")
+    c = GraphClient(token="test-token")
+    # http2=True causes respx to miss the transport intercept; replace with plain client
+    c.client = httpx.AsyncClient(
+        http2=False,
+        timeout=5,
+        headers=dict(c.client.headers),
+    )
+    return c
 
 
 class TestGraphError:
