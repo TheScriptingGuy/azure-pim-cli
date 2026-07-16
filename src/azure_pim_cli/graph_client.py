@@ -27,9 +27,9 @@ class PermissionDenied(GraphError):
 
 
 class GraphClient:
-    def __init__(self, token: str):
+    def __init__(self, token: str, *, _http2: bool = True):
         self.client = httpx.AsyncClient(
-            http2=True,
+            http2=_http2,
             timeout=30,
             headers={
                 "Authorization": f"Bearer {token}",

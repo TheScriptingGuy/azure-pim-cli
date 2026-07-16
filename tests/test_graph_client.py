@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import httpx
 import pytest
@@ -23,7 +23,7 @@ async def mock_httpx() -> AsyncGenerator[None, None]:
 
 @pytest.fixture()
 async def client() -> AsyncGenerator[GraphClient, None]:
-    c = GraphClient(token="test-token")
+    c = GraphClient(token="test-token", _http2=False)
     try:
         yield c
     finally:

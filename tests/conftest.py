@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+
+# ProactorEventLoop (Windows default) hangs on teardown with pytest-asyncio 1.x
+# due to pending IOCP handles; SelectorEventLoop closes cleanly.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @pytest.fixture()
