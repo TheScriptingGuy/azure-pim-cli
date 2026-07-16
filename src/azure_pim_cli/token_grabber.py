@@ -288,7 +288,7 @@ def grab_token(
                     pass
 
             try:
-                ctx = pw.chromium.launch_persistent_context(**launch_kwargs)
+                ctx = pw.chromium.launch_persistent_context(**launch_kwargs)  # type: ignore[arg-type]
             except Exception as e:
                 if channel:
                     print(
@@ -296,7 +296,7 @@ def grab_token(
                         file=sys.stderr,
                     )
                     launch_kwargs.pop("channel", None)
-                    ctx = pw.chromium.launch_persistent_context(**launch_kwargs)
+                    ctx = pw.chromium.launch_persistent_context(**launch_kwargs)  # type: ignore[arg-type]
                 else:
                     raise
 

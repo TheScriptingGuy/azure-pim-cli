@@ -34,6 +34,7 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: windows-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.12", "3.13"]
@@ -47,9 +48,13 @@ jobs:
           enable-cache: true
 
       - name: Sync dependencies
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: uv sync --extra dev
 
       - name: pytest
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: uv run pytest --cov=azure_pim_cli --cov-report=term-missing --cov-fail-under=60
 
   build:
