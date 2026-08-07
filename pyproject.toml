@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -52,8 +52,13 @@ dev = [
     "types-python-dateutil>=2.9",
 ]
 
+# Version comes from the git tag (v1.2.3 -> 1.2.3), so a release is whatever
+# was tagged — there is no second copy of the number to forget to bump.
 [tool.hatch.version]
-path = "src/azure_pim_cli/__init__.py"
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/azure_pim_cli/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/azure_pim_cli"]

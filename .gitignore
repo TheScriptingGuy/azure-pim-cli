@@ -1,4 +1,5 @@
 __pycache__/
+src/azure_pim_cli/_version.py
 *.py[cod]
 *.egg-info/
 dist/
