@@ -133,7 +133,7 @@ _STORAGE_SCRAPE_JS = r"""
                     const target = (obj.target || "").toLowerCase();
                     if (target.includes("graph.microsoft.com")) {
                         const exp = parseInt(obj.expiresOn || "0", 10);
-                        if (!exp || exp > now + 30) {
+                        if (exp && exp > now + 30) {
                             // Prefer PIM-scoped, then ADIbizaUX broad scope, then anything Graph
                             let score = 0;
                             if (target.includes("privilegedeligibilityschedule")) score += 100;
@@ -213,6 +213,9 @@ def grab_token(
     target_hosts = AZRBAC_HOSTS if resource == "azrbac" else GRAPH_HOSTS
 
     def _accept(candidate: str) -> bool:
+        exp = _decode_exp(candidate)
+        if not exp or exp <= int(time.time()) + 30:
+            return False
         if resource == "azrbac":
             return _is_azrbac_token(candidate)
         return _has_pim_scope(candidate, require_readwrite=require_readwrite, require_acrs=require_acrs)
