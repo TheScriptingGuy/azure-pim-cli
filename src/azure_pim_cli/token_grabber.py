@@ -64,6 +64,7 @@ def _profile_dir() -> Path:
 PIM_READ_MARKERS = (
     "privilegedeligibilityschedule.read.azureadgroup",
     "privilegedaccess.read.azureadgroup",
+    "privilegedassignmentschedule.read.azureadgroup",
 )
 PIM_READWRITE_MARKERS = (
     "privilegedeligibilityschedule.readwrite.azureadgroup",
@@ -136,6 +137,10 @@ _STORAGE_SCRAPE_JS = r"""
                         if (exp && exp > now + 30) {
                             // Prefer PIM-scoped, then ADIbizaUX broad scope, then anything Graph
                             let score = 0;
+                            if (target.includes("privilegedassignmentschedule.readwrite")) score += 200;
+                            if (target.includes("privilegedaccess.readwrite")) score += 200;
+                            if (target.includes("privilegedeligibilityschedule.readwrite")) score += 200;
+                            if (target.includes("privilegedassignmentschedule")) score += 150;
                             if (target.includes("privilegedeligibilityschedule")) score += 100;
                             if (target.includes("privilegedaccess")) score += 100;
                             if (target.includes("rolemanagement")) score += 50;
