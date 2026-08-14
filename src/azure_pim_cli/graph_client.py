@@ -97,6 +97,55 @@ class GraphClient:
             out.extend(page.get("value") or [])
         return out
 
+    async def batch(self, requests: list[dict]) -> dict[str, dict | None]:
+        """POST /$batch — bundle up to 20 requests per HTTP call.
+
+        Input: [{"id": "<caller-key>", "method": "GET", "url": "/relative/path", "body": {...}}]
+        URLs must be relative to /v1.0 and start with "/".
+        Returns {caller_id: response_body_or_None_on_error}. One retry pass for
+        sub-responses that return 429 (honors Retry-After).
+        """
+        if not requests:
+            return {}
+
+        results: dict[str, dict | None] = {}
+
+        async def _post_chunk(chunk: list[dict]) -> list[dict]:
+            body = {"requests": [{k: v for k, v in r.items() if v is not None} for r in chunk]}
+            resp = await self._request("POST", "/$batch", json_body=body)
+            return resp.get("responses") or []
+
+        async def _run(chunks: list[list[dict]]) -> list[list[dict]]:
+            return list(await asyncio.gather(*[_post_chunk(c) for c in chunks]))
+
+        chunks = [requests[i : i + 20] for i in range(0, len(requests), 20)]
+        all_responses = [r for group in await _run(chunks) for r in group]
+
+        retry_ids: set[str] = set()
+        max_retry_after = 0
+        for r in all_responses:
+            rid = r.get("id")
+            status = r.get("status", 0)
+            if status == 429:
+                retry_ids.add(rid)
+                ra = int((r.get("headers") or {}).get("Retry-After", "5") or 5)
+                max_retry_after = max(max_retry_after, ra)
+            elif 200 <= status < 300:
+                results[rid] = r.get("body") or {}
+            else:
+                results[rid] = None
+
+        if retry_ids:
+            await asyncio.sleep(max_retry_after)
+            retry_reqs = [r for r in requests if r["id"] in retry_ids]
+            chunks = [retry_reqs[i : i + 20] for i in range(0, len(retry_reqs), 20)]
+            for r in [x for group in await _run(chunks) for x in group]:
+                rid = r.get("id")
+                status = r.get("status", 0)
+                results[rid] = r.get("body") or {} if 200 <= status < 300 else None
+
+        return results
+
     async def list_pim_group_active_assignments(self) -> list[dict]:
         """Portal's 'Actieve toewijzingen' (Active assignments) endpoint.
 

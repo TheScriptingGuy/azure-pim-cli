@@ -45,90 +45,6 @@ async def fetch_me(gc: GraphClient) -> dict:
     return await gc.get("/me?$select=id,displayName,userPrincipalName")
 
 
-async def _enrich_eligibility(
-    gc: GraphClient,
-    entry: dict,
-    sem: asyncio.Semaphore,
-    rules_cache: dict[str, asyncio.Task],
-) -> dict:
-    from urllib.parse import quote
-
-    gid = entry["groupId"]
-    access_id = entry["accessId"]
-
-    grp = entry.get("group") or {}
-    display_name = grp.get("displayName") or gid
-    description = grp.get("description") or ""
-    policy_max_h = 8
-    req_j = True
-    req_t = False
-    req_mfa = False
-
-    pflt = quote(f"scopeId eq '{gid}' and scopeType eq 'Group' and roleDefinitionId eq '{access_id}'")
-
-    async with sem:
-        # Fetch group meta only if $expand=group didn't already supply it.
-        need_grp = not grp
-        grp_task = (
-            asyncio.create_task(gc.get(f"/groups/{gid}?$select=id,displayName,description"))
-            if need_grp
-            else None
-        )
-        assigns_task = asyncio.create_task(
-            gc.get_paged(f"/policies/roleManagementPolicyAssignments?$filter={pflt}&$select=policyId")
-        )
-
-        if grp_task is not None:
-            try:
-                grp = await grp_task
-                display_name = grp.get("displayName") or gid
-                description = grp.get("description") or ""
-            except GraphError:
-                pass
-
-        try:
-            assigns = await assigns_task
-            if assigns:
-                policy_id = assigns[0]["policyId"]
-                # Dedupe rules lookup: many groups map to the same PIM policy.
-                if policy_id not in rules_cache:
-                    rules_cache[policy_id] = asyncio.create_task(
-                        gc.get_paged(f"/policies/roleManagementPolicies/{policy_id}/rules")
-                    )
-                rules = await rules_cache[policy_id]
-                for r in rules:
-                    rid = r.get("id", "")
-                    if rid == "Expiration_EndUser_Assignment":
-                        dur = r.get("maximumDuration")
-                        if dur:
-                            policy_max_h = _iso8601_hours(dur) or policy_max_h
-                    elif rid == "Enablement_EndUser_Assignment":
-                        enabled = r.get("enabledRules") or []
-                        req_j = "Justification" in enabled
-                        req_t = "Ticketing" in enabled
-                        req_mfa = "MultiFactorAuthentication" in enabled
-        except GraphError:
-            pass
-
-    end_dt = "Permanent"
-    sched = entry.get("scheduleInfo") or {}
-    exp = sched.get("expiration") or {}
-    if exp.get("endDateTime"):
-        end_dt = exp["endDateTime"]
-
-    return {
-        "groupId": gid,
-        "displayName": display_name,
-        "description": description,
-        "accessId": access_id,
-        "endDateTime": end_dt,
-        "policyMaxDurationHours": policy_max_h,
-        "requiresJustification": req_j,
-        "requiresTicket": req_t,
-        "requiresMfa": req_mfa,
-    }
-
-
 async def fetch_eligibilities(gc: GraphClient, principal_id: str, fetch_workers: int) -> list[dict]:
     from urllib.parse import quote
 
@@ -141,12 +57,83 @@ async def fetch_eligibilities(gc: GraphClient, principal_id: str, fetch_workers:
         f"?$filter={flt}&$expand=group"
     )
     console.print(f"[dim]Found {len(raw)} eligible assignment(s).[/dim]")
+    if not raw:
+        return []
 
-    sem = asyncio.Semaphore(fetch_workers)
-    rules_cache: dict[str, asyncio.Task] = {}
-    return list(
-        await asyncio.gather(*[_enrich_eligibility(gc, e, sem, rules_cache) for e in raw])
-    )
+    # Phase 1: one $batch of GET /policies/roleManagementPolicyAssignments per
+    # (groupId, accessId) — resolves each eligibility's policyId.
+    assign_reqs = []
+    for i, e in enumerate(raw):
+        pflt = quote(
+            f"scopeId eq '{e['groupId']}' and scopeType eq 'Group' "
+            f"and roleDefinitionId eq '{e['accessId']}'"
+        )
+        assign_reqs.append({
+            "id": str(i),
+            "method": "GET",
+            "url": f"/policies/roleManagementPolicyAssignments?$filter={pflt}&$select=policyId",
+        })
+    assign_resp = await gc.batch(assign_reqs)
+
+    policy_ids: dict[int, str | None] = {}
+    unique_policies: set[str] = set()
+    for i in range(len(raw)):
+        body = assign_resp.get(str(i)) or {}
+        vals = body.get("value") or []
+        pid = vals[0]["policyId"] if vals else None
+        policy_ids[i] = pid
+        if pid:
+            unique_policies.add(pid)
+
+    # Phase 2: one $batch of rules fetches, deduped across policies.
+    rules_reqs = [
+        {"id": pid, "method": "GET", "url": f"/policies/roleManagementPolicies/{pid}/rules"}
+        for pid in unique_policies
+    ]
+    rules_resp = await gc.batch(rules_reqs)
+    rules_by_policy: dict[str, list[dict]] = {
+        pid: (rules_resp.get(pid) or {}).get("value") or []
+        for pid in unique_policies
+    }
+
+    out: list[dict] = []
+    for i, e in enumerate(raw):
+        grp = e.get("group") or {}
+        policy_max_h = 8
+        req_j, req_t, req_mfa = True, False, False
+        pid = policy_ids.get(i)
+        if pid:
+            for r in rules_by_policy.get(pid, []):
+                rid = r.get("id", "")
+                if rid == "Expiration_EndUser_Assignment":
+                    dur = r.get("maximumDuration")
+                    if dur:
+                        policy_max_h = _iso8601_hours(dur) or policy_max_h
+                elif rid == "Enablement_EndUser_Assignment":
+                    enabled = r.get("enabledRules") or []
+                    req_j = "Justification" in enabled
+                    req_t = "Ticketing" in enabled
+                    req_mfa = "MultiFactorAuthentication" in enabled
+
+        end_dt = "Permanent"
+        exp = (e.get("scheduleInfo") or {}).get("expiration") or {}
+        if exp.get("endDateTime"):
+            end_dt = exp["endDateTime"]
+
+        out.append({
+            "groupId": e["groupId"],
+            "displayName": grp.get("displayName") or e["groupId"],
+            "description": grp.get("description") or "",
+            "accessId": e["accessId"],
+            "endDateTime": end_dt,
+            "policyMaxDurationHours": policy_max_h,
+            "requiresJustification": req_j,
+            "requiresTicket": req_t,
+            "requiresMfa": req_mfa,
+        })
+
+    _ = fetch_workers  # kept for CLI backward compat; no longer needed with $batch.
+    return out
 
 
 async def fetch_active_group_ids(gc: GraphClient) -> set[str]:
