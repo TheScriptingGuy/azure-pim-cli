@@ -15,13 +15,13 @@ class TestPortAlive:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_resp.status = 200
         with patch("urllib.request.urlopen", return_value=mock_resp):
-            assert launcher._port_alive(9222) is True
+            assert launcher.port_alive(9222) is True
 
     def test_returns_false_on_connection_error(self) -> None:
         import urllib.error
 
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
-            assert launcher._port_alive(9222) is False
+            assert launcher.port_alive(9222) is False
 
 
 class TestKillChrome:
@@ -52,7 +52,7 @@ class TestChromeExe:
 
 class TestLaunchDebugChrome:
     def test_fast_path_when_port_alive(self) -> None:
-        with patch.object(launcher, "_port_alive", return_value=True):
+        with patch.object(launcher, "port_alive", return_value=True):
             endpoint = launcher.launch_debug_chrome(port=9222)
         assert endpoint == "http://localhost:9222"
 
@@ -66,7 +66,7 @@ class TestLaunchDebugChrome:
         port_responses = [False, True]  # not alive → launch → alive
 
         with (
-            patch.object(launcher, "_port_alive", side_effect=port_responses),
+            patch.object(launcher, "port_alive", side_effect=port_responses),
             patch.object(launcher, "_kill_chrome"),
             patch.object(launcher, "_copy_profile"),
             patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),
@@ -93,7 +93,7 @@ class TestLaunchDebugChrome:
         dst = tmp_path / "dst"
 
         with (
-            patch.object(launcher, "_port_alive", side_effect=[False, True]),
+            patch.object(launcher, "port_alive", side_effect=[False, True]),
             patch.object(launcher, "_kill_chrome"),
             patch.object(launcher, "_copy_profile"),
             patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),
@@ -114,7 +114,7 @@ class TestLaunchDebugChrome:
         dst = tmp_path / "dst"
 
         with (
-            patch.object(launcher, "_port_alive", return_value=False),
+            patch.object(launcher, "port_alive", return_value=False),
             patch.object(launcher, "_kill_chrome"),
             patch.object(launcher, "_copy_profile"),
             patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),

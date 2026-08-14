@@ -117,7 +117,10 @@ class TestGraphClientGetPaged:
     async def test_follows_next_link(self, client: GraphClient, mock_router: respx.MockRouter) -> None:
         page1_url = f"{GRAPH_BASE}/items"
         page2_url = f"{GRAPH_BASE}/items?skiptoken=abc"
-        mock_router.get(page1_url).mock(
+        # url__eq pins the first route to the query-less URL. A plain get(page1_url)
+        # leaves the query string unconstrained, so it also matches the page-2
+        # request and replays page 1 — nextLink and all — into an endless loop.
+        mock_router.get(url__eq=page1_url).mock(
             return_value=httpx.Response(
                 200,
                 json={
