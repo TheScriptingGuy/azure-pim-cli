@@ -11,6 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # hatch-vcs derives the version from `git describe`, which needs the
+          # tag objects and enough history to reach them.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -26,6 +31,16 @@ jobs:
 
       - name: Build distributions
         run: uv build
+
+      - name: Verify built version matches the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          built="$(ls dist/*.whl | head -n1 | sed -E 's|.*/azure_pim_cli-([^-]+)-.*|\1|')"
+          echo "tag=$tag built=$built"
+          if [ "$tag" != "$built" ]; then
+            echo "::error::tag $GITHUB_REF_NAME produced version $built — refusing to publish"
+            exit 1
+          fi
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v4

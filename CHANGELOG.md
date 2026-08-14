@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Release builds now take their version from the pushed git tag (`v1.2.3` → `1.2.3`)
+  via `hatch-vcs`, instead of the hardcoded `__version__` in
+  `src/azure_pim_cli/__init__.py` — every tag after `v0.1.0` was rebuilding `0.1.0`
+  and would have been rejected by PyPI as a duplicate. The release workflow also
+  fails now if the built version and the tag disagree.
+
 ## [0.1.0] - 2026-07-10
 
 ### Added
