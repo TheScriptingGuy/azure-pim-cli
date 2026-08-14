@@ -668,16 +668,68 @@ class TestRunWithClient:
         assert "Auto-prime failed" in out
         assert "Falling back to manual prime" in out
 
-    async def test_acrs_without_cdp_endpoint_goes_manual(self, stub_cache, capsys: pytest.CaptureFixture[str]) -> None:
+    async def test_acrs_without_cdp_endpoint_lazily_launches_chrome(
+        self, stub_cache, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--token/--no-auto-cdp leaves cdp_endpoint None; the prime path launches Chrome itself."""
+        posts: list[Any] = [
+            GraphError(400, "RoleAssignmentRequestAcrsValidationFailed", "AcrsValidationFailed"),
+            {"id": "r1", "status": "Provisioned"},
+        ]
+
+        class _RetryGC(FakeGC):
+            async def post(self, path: str, body: dict) -> dict:
+                self.posts.append((path, body))
+                nxt = posts.pop(0)
+                if isinstance(nxt, Exception):
+                    raise nxt
+                return nxt
+
+        gc = _RetryGC(
+            paged=[{"groupId": "g1", "accessId": "member", "group": {"displayName": "db-x"}}],
+            batches=[{"0": {"value": []}}, {}],
+        )
+
+        launched: dict[str, Any] = {}
+
+        def _launch(**kwargs: Any) -> str:
+            launched.update(kwargs)
+            return "http://localhost:9222"
+
+        import azure_pim_cli.acrs_primer as primer
+
+        monkeypatch.setattr(cli, "launch_debug_chrome", _launch)
+        monkeypatch.setattr(primer, "prime_acrs", lambda *a, **k: "fresh-token")
+
+        args = make_args(group="db-", justification="because", parallel=1)
+        rc = await cli._run_with_client(args, gc, None)  # type: ignore[arg-type]
+
+        assert rc == 0
+        assert launched["port"] == args.auto_cdp_port
+        assert gc.token == "fresh-token"
+        assert len(gc.posts) == 2
+
+    async def test_acrs_lazy_chrome_launch_failure_goes_manual(
+        self, stub_cache, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         gc = FakeGC(
             paged=[{"groupId": "g1", "accessId": "member", "group": {"displayName": "db-x"}}],
             batches=[{"0": {"value": []}}, {}],
             post_result=GraphError(400, "Acrs", "AcrsValidationFailed"),
         )
+
+        def _no_chrome(**kwargs: Any) -> str:
+            raise RuntimeError("chrome.exe not found")
+
+        monkeypatch.setattr(cli, "launch_debug_chrome", _no_chrome)
+
         args = make_args(group="db-", justification="because", parallel=1)
         rc = await cli._run_with_client(args, gc, None)  # type: ignore[arg-type]
+
         assert rc == 0
-        assert "Falling back to manual prime" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "Chrome launch for acrs prime failed" in out
+        assert "Falling back to manual prime" in out
 
     async def test_eligibilities_only_skips_approval_feed(self, stub_cache, capsys) -> None:
         gc = FakeGC(
