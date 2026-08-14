@@ -17,6 +17,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting package version to ${VERSION}"
+          python -c "import re, pathlib; p = pathlib.Path('src/azure_pim_cli/__init__.py'); p.write_text(re.sub(r'__version__ = \".*\"', f'__version__ = \"${VERSION}\"', p.read_text()))"
+          grep __version__ src/azure_pim_cli/__init__.py
+
       - name: Build distributions
         run: uv build
 

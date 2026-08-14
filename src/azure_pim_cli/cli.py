@@ -45,14 +45,20 @@ async def fetch_me(gc: GraphClient) -> dict:
     return await gc.get("/me?$select=id,displayName,userPrincipalName")
 
 
-async def _enrich_eligibility(gc: GraphClient, entry: dict, sem: asyncio.Semaphore) -> dict:
+async def _enrich_eligibility(
+    gc: GraphClient,
+    entry: dict,
+    sem: asyncio.Semaphore,
+    rules_cache: dict[str, asyncio.Task],
+) -> dict:
     from urllib.parse import quote
 
     gid = entry["groupId"]
     access_id = entry["accessId"]
 
-    display_name = gid
-    description = ""
+    grp = entry.get("group") or {}
+    display_name = grp.get("displayName") or gid
+    description = grp.get("description") or ""
     policy_max_h = 8
     req_j = True
     req_t = False
@@ -61,21 +67,35 @@ async def _enrich_eligibility(gc: GraphClient, entry: dict, sem: asyncio.Semapho
     pflt = quote(f"scopeId eq '{gid}' and scopeType eq 'Group' and roleDefinitionId eq '{access_id}'")
 
     async with sem:
-        grp_task = asyncio.create_task(gc.get(f"/groups/{gid}?$select=id,displayName,description"))
-        assigns_task = asyncio.create_task(gc.get_paged(f"/policies/roleManagementPolicyAssignments?$filter={pflt}"))
+        # Fetch group meta only if $expand=group didn't already supply it.
+        need_grp = not grp
+        grp_task = (
+            asyncio.create_task(gc.get(f"/groups/{gid}?$select=id,displayName,description"))
+            if need_grp
+            else None
+        )
+        assigns_task = asyncio.create_task(
+            gc.get_paged(f"/policies/roleManagementPolicyAssignments?$filter={pflt}&$select=policyId")
+        )
 
-        try:
-            grp = await grp_task
-            display_name = grp.get("displayName") or gid
-            description = grp.get("description") or ""
-        except GraphError:
-            pass
+        if grp_task is not None:
+            try:
+                grp = await grp_task
+                display_name = grp.get("displayName") or gid
+                description = grp.get("description") or ""
+            except GraphError:
+                pass
 
         try:
             assigns = await assigns_task
             if assigns:
                 policy_id = assigns[0]["policyId"]
-                rules = await gc.get_paged(f"/policies/roleManagementPolicies/{policy_id}/rules")
+                # Dedupe rules lookup: many groups map to the same PIM policy.
+                if policy_id not in rules_cache:
+                    rules_cache[policy_id] = asyncio.create_task(
+                        gc.get_paged(f"/policies/roleManagementPolicies/{policy_id}/rules")
+                    )
+                rules = await rules_cache[policy_id]
                 for r in rules:
                     rid = r.get("id", "")
                     if rid == "Expiration_EndUser_Assignment":
@@ -113,11 +133,20 @@ async def fetch_eligibilities(gc: GraphClient, principal_id: str, fetch_workers:
     from urllib.parse import quote
 
     flt = quote(f"principalId eq '{principal_id}'")
-    raw = await gc.get_paged(f"/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter={flt}")
+    # $expand=group folds displayName/description into the initial page,
+    # eliminating one /groups/{id} round-trip per eligible assignment.
+    # Nested $select inside $expand is rejected on this endpoint — plain $expand only.
+    raw = await gc.get_paged(
+        f"/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances"
+        f"?$filter={flt}&$expand=group"
+    )
     console.print(f"[dim]Found {len(raw)} eligible assignment(s).[/dim]")
 
     sem = asyncio.Semaphore(fetch_workers)
-    return list(await asyncio.gather(*[_enrich_eligibility(gc, e, sem) for e in raw]))
+    rules_cache: dict[str, asyncio.Task] = {}
+    return list(
+        await asyncio.gather(*[_enrich_eligibility(gc, e, sem, rules_cache) for e in raw])
+    )
 
 
 async def fetch_active_group_ids(gc: GraphClient) -> set[str]:
