@@ -95,3 +95,22 @@ class TestMarkNew:
         curr = [{"groupId": "grp"}]
         result = cache.mark_new(curr, [])
         assert result[0]["isNew"] is False
+
+
+class TestIsValidForSession:
+    def test_rejects_a_different_principal(self, fresh_cache_payload: dict) -> None:
+        assert cache.is_valid_for_session(fresh_cache_payload, "someone-else", False) is False
+
+    def test_rejects_empty_cache(self) -> None:
+        assert cache.is_valid_for_session({}, "user-123", True) is False
+
+    def test_live_chrome_session_keeps_a_stale_cache_usable(self, fresh_cache_payload: dict) -> None:
+        stale = {**fresh_cache_payload, "fetchedAt": "2000-01-01T00:00:00+00:00"}
+        assert cache.is_valid_for_session(stale, "user-123", True) is True
+
+    def test_without_chrome_falls_back_to_age(self, fresh_cache_payload: dict) -> None:
+        assert cache.is_valid_for_session(fresh_cache_payload, "user-123", False) is True
+
+    def test_without_chrome_a_stale_cache_is_invalid(self, fresh_cache_payload: dict) -> None:
+        stale = {**fresh_cache_payload, "fetchedAt": "2000-01-01T00:00:00+00:00"}
+        assert cache.is_valid_for_session(stale, "user-123", False) is False
