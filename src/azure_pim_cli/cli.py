@@ -53,8 +53,7 @@ async def fetch_eligibilities(gc: GraphClient, principal_id: str, fetch_workers:
     # eliminating one /groups/{id} round-trip per eligible assignment.
     # Nested $select inside $expand is rejected on this endpoint — plain $expand only.
     raw = await gc.get_paged(
-        f"/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances"
-        f"?$filter={flt}&$expand=group"
+        f"/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter={flt}&$expand=group"
     )
     console.print(f"[dim]Found {len(raw)} eligible assignment(s).[/dim]")
     if not raw:
@@ -64,15 +63,14 @@ async def fetch_eligibilities(gc: GraphClient, principal_id: str, fetch_workers:
     # (groupId, accessId) — resolves each eligibility's policyId.
     assign_reqs = []
     for i, e in enumerate(raw):
-        pflt = quote(
-            f"scopeId eq '{e['groupId']}' and scopeType eq 'Group' "
-            f"and roleDefinitionId eq '{e['accessId']}'"
+        pflt = quote(f"scopeId eq '{e['groupId']}' and scopeType eq 'Group' and roleDefinitionId eq '{e['accessId']}'")
+        assign_reqs.append(
+            {
+                "id": str(i),
+                "method": "GET",
+                "url": f"/policies/roleManagementPolicyAssignments?$filter={pflt}&$select=policyId",
+            }
         )
-        assign_reqs.append({
-            "id": str(i),
-            "method": "GET",
-            "url": f"/policies/roleManagementPolicyAssignments?$filter={pflt}&$select=policyId",
-        })
     assign_resp = await gc.batch(assign_reqs)
 
     policy_ids: dict[int, str | None] = {}
@@ -87,13 +85,11 @@ async def fetch_eligibilities(gc: GraphClient, principal_id: str, fetch_workers:
 
     # Phase 2: one $batch of rules fetches, deduped across policies.
     rules_reqs = [
-        {"id": pid, "method": "GET", "url": f"/policies/roleManagementPolicies/{pid}/rules"}
-        for pid in unique_policies
+        {"id": pid, "method": "GET", "url": f"/policies/roleManagementPolicies/{pid}/rules"} for pid in unique_policies
     ]
     rules_resp = await gc.batch(rules_reqs)
     rules_by_policy: dict[str, list[dict]] = {
-        pid: (rules_resp.get(pid) or {}).get("value") or []
-        for pid in unique_policies
+        pid: (rules_resp.get(pid) or {}).get("value") or [] for pid in unique_policies
     }
 
     out: list[dict] = []
@@ -120,17 +116,19 @@ async def fetch_eligibilities(gc: GraphClient, principal_id: str, fetch_workers:
         if exp.get("endDateTime"):
             end_dt = exp["endDateTime"]
 
-        out.append({
-            "groupId": e["groupId"],
-            "displayName": grp.get("displayName") or e["groupId"],
-            "description": grp.get("description") or "",
-            "accessId": e["accessId"],
-            "endDateTime": end_dt,
-            "policyMaxDurationHours": policy_max_h,
-            "requiresJustification": req_j,
-            "requiresTicket": req_t,
-            "requiresMfa": req_mfa,
-        })
+        out.append(
+            {
+                "groupId": e["groupId"],
+                "displayName": grp.get("displayName") or e["groupId"],
+                "description": grp.get("description") or "",
+                "accessId": e["accessId"],
+                "endDateTime": end_dt,
+                "policyMaxDurationHours": policy_max_h,
+                "requiresJustification": req_j,
+                "requiresTicket": req_t,
+                "requiresMfa": req_mfa,
+            }
+        )
 
     _ = fetch_workers  # kept for CLI backward compat; no longer needed with $batch.
     return out
