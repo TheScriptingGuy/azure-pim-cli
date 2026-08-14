@@ -45,7 +45,7 @@ def _default_source_profile() -> Path:
     return Path(os.environ["LOCALAPPDATA"]) / "Google" / "Chrome" / "User Data"
 
 
-def _port_alive(port: int) -> bool:
+def port_alive(port: int) -> bool:
     try:
         with urllib.request.urlopen(f"http://localhost:{port}/json/version", timeout=1) as r:
             return r.status == 200
@@ -56,7 +56,7 @@ def _port_alive(port: int) -> bool:
 def _wait_ready(port: int, timeout: float = 30.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if _port_alive(port):
+        if port_alive(port):
             return True
         time.sleep(0.5)
     return False
@@ -102,10 +102,10 @@ def launch_debug_chrome(
 
     Returns CDP endpoint URL (http://localhost:<port>).
     """
-    if _port_alive(port) and not force_profile_refresh:
+    if port_alive(port) and not force_profile_refresh:
         print(f"[chrome] debug port {port} already responding; reusing.", file=sys.stderr)
         return f"http://localhost:{port}"
-    if _port_alive(port) and force_profile_refresh:
+    if port_alive(port) and force_profile_refresh:
         print(
             "[chrome] --refresh-chrome-profile set; restarting Chrome to apply fresh profile.",
             file=sys.stderr,

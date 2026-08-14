@@ -191,6 +191,66 @@ def _scrape_all_pages(ctx) -> str | None:
     return None
 
 
+_PORTAL_ERROR_MARKERS = (
+    "looks like something went wrong",
+    "hmmm",
+    "er is iets misgegaan",
+    "try again",
+    "opnieuw proberen",
+)
+
+
+def _portal_error_visible(page) -> bool:
+    """True when portal shows the generic 'Hmmm... looks like something went wrong' error."""
+    try:
+        body = page.evaluate("() => (document.body && document.body.innerText || '').slice(0, 2000)")
+    except Exception:
+        return False
+    if not body:
+        return False
+    low = body.lower()
+    return any(m in low for m in _PORTAL_ERROR_MARKERS)
+
+
+def _nav_with_retry(page, url: str, attempts: int = 3, per_timeout_ms: int = 30_000) -> None:
+    """Navigate with a short per-attempt timeout, retrying on Playwright timeout or portal error page.
+
+    Portal sometimes shows "Hmmm... Looks like something went wrong" instead of loading;
+    a hard reload usually recovers. We prefer many short attempts over one long hang.
+    """
+    last_err: Exception | None = None
+    for i in range(1, attempts + 1):
+        try:
+            page.goto(url, wait_until="commit", timeout=per_timeout_ms)
+        except Exception as e:
+            last_err = e
+            print(f"[token] nav attempt {i}/{attempts} to {url[:70]} timed out: {e}", file=sys.stderr)
+            try:
+                page.reload(wait_until="commit", timeout=per_timeout_ms)
+            except Exception:
+                pass
+            continue
+        # Give portal a moment to render, then look for the error page.
+        try:
+            page.wait_for_timeout(1500)
+        except Exception:
+            pass
+        if _portal_error_visible(page):
+            print(f"[token] portal error page on attempt {i}/{attempts} — reloading", file=sys.stderr)
+            try:
+                page.reload(wait_until="commit", timeout=per_timeout_ms)
+                page.wait_for_timeout(1500)
+                if not _portal_error_visible(page):
+                    return
+            except Exception as e:
+                last_err = e
+                continue
+        else:
+            return
+    if last_err is not None:
+        print(f"[token] nav to {url[:70]} gave up after {attempts} attempts: {last_err}", file=sys.stderr)
+
+
 def grab_token(
     headless: bool = False,
     keep_open: bool = False,
@@ -352,10 +412,7 @@ def grab_token(
                             page = pg
                             page.on("request", on_request)
                             print(f"[token] reusing portal tab: {pg.url[:80]}", file=sys.stderr)
-                            try:
-                                page.goto(ordered[0], wait_until="commit", timeout=30_000)
-                            except Exception as e:
-                                print(f"[token] reused tab nav warning: {e}", file=sys.stderr)
+                            _nav_with_retry(page, ordered[0])
                             break
                 else:
                     try:
@@ -363,7 +420,7 @@ def grab_token(
                         opened_page.on("request", on_request)
                         page = opened_page
                         print(f"[token] opening new tab: {ordered[0]}", file=sys.stderr)
-                        opened_page.goto(ordered[0], wait_until="commit", timeout=30_000)
+                        _nav_with_retry(opened_page, ordered[0])
                     except Exception as e:
                         print(
                             f"[token] CDP new-tab warning: {e}; falling back to existing tabs.",
@@ -374,10 +431,7 @@ def grab_token(
                             file=sys.stderr,
                         )
         else:
-            try:
-                page.goto(ordered[0], wait_until="commit", timeout=30_000)
-            except Exception as e:
-                print(f"[token] initial nav warning: {e}", file=sys.stderr)
+            _nav_with_retry(page, ordered[0])
 
         # Poll: race network sniff against storage scrape; nudge to next blade at intervals.
         nudge_at = [60, 150]  # seconds elapsed to nudge to blade[1], blade[2]
@@ -385,6 +439,9 @@ def grab_token(
         started = time.time()
         deadline = started + sniff_timeout
         next_nudge_idx = 0
+        # CDP-only: force MSAL to re-init if scrape+sniff both silent. Once each.
+        did_soft_reload = False
+        did_hard_reload = False
 
         while time.time() < deadline:
             if token_event.wait(timeout=5):
@@ -424,10 +481,29 @@ def grab_token(
                     target = nudge_targets[next_nudge_idx]
                     next_nudge_idx += 1
                     print(f"[token] nudging to: {target}", file=sys.stderr)
-                    try:
-                        page.goto(target, wait_until="commit", timeout=30_000)
-                    except Exception as e:
-                        print(f"[token] nudge nav warning: {e}", file=sys.stderr)
+                    _nav_with_retry(page, target)
+
+            # CDP-only reload escalation: previous token likely expired; MSAL cached
+            # AccessToken in sessionStorage is stale so hash-nav didn't refresh it.
+            # Hard reload forces the SPA to re-bootstrap MSAL → acquireTokenSilent
+            # → Graph XHR fires (or fresh token lands in storage). Once at 20s, again at 90s.
+            if cdp and not did_soft_reload and elapsed >= 20:
+                did_soft_reload = True
+                print(
+                    "[token] no token after 20s — hard-reloading portal tab to nudge MSAL",
+                    file=sys.stderr,
+                )
+                try:
+                    page.reload(wait_until="commit", timeout=30_000)
+                except Exception as e:
+                    print(f"[token] reload warning: {e}", file=sys.stderr)
+            elif cdp and did_soft_reload and not did_hard_reload and elapsed >= 90:
+                did_hard_reload = True
+                print(
+                    "[token] still no token after 90s — re-navigating to activation blade",
+                    file=sys.stderr,
+                )
+                _nav_with_retry(page, ordered[0])
 
         if not token_event.is_set():
             if not keep_open:

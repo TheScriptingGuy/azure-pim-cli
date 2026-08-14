@@ -21,7 +21,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import cache as cache_mod
-from .chrome_launcher import DEFAULT_COPY_PROFILE, DEFAULT_PORT, launch_debug_chrome
+from .chrome_launcher import DEFAULT_COPY_PROFILE, DEFAULT_PORT, launch_debug_chrome, port_alive
 from .graph_client import GraphClient, GraphError, PermissionDenied, TokenExpired
 from .token_grabber import DEFAULT_CHANNEL, grab_token
 
@@ -384,7 +384,13 @@ async def _run_with_client(args: argparse.Namespace, gc: GraphClient, cdp_endpoi
     # Cache setup — decides whether eligibility fetch is needed at all.
     cached = cache_mod.load()
     previous: list[dict] | None = cached["eligible"] if (cached and cached.get("eligible")) else None
-    use_cache = not args.approvals_only and cached and not args.refresh and cache_mod.is_fresh(cached, principal_id)
+    chrome_alive = bool(args.auto_cdp) and port_alive(args.auto_cdp_port)
+    use_cache = (
+        not args.approvals_only
+        and cached
+        and not args.refresh
+        and cache_mod.is_valid_for_session(cached, principal_id, chrome_alive)
+    )
 
     # Fan out top-level fetches: pending, eligibilities, active_ids — all concurrent.
     pending_task: asyncio.Task | None = None

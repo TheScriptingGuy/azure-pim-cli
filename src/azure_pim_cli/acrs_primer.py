@@ -97,10 +97,11 @@ def prime_acrs(cdp_endpoint: str, justification: str = "acrs prime", timeout: in
         page.on("request", on_req)
 
         print("[acrs] navigating portal tab to activation blade...", file=sys.stderr)
-        try:
-            page.goto(ACTIVATION_URL, wait_until="commit", timeout=60_000)
-        except Exception as e:
-            print(f"[acrs] nav warning: {e}", file=sys.stderr)
+        # Portal occasionally shows "Hmmm... looks like something went wrong" —
+        # retry with short timeouts + reload rather than one long hang.
+        from .token_grabber import _nav_with_retry
+
+        _nav_with_retry(page, ACTIVATION_URL, attempts=3, per_timeout_ms=30_000)
 
         # Wait for eligibility grid to render
         try:

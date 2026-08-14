@@ -51,6 +51,20 @@ def is_fresh(cache: dict, principal_id: str) -> bool:
     return age.total_seconds() < CACHE_MAX_HOURS * 3600
 
 
+def is_valid_for_session(cache: dict, principal_id: str, chrome_port_alive: bool) -> bool:
+    """Cache usable if principal matches AND (Chrome debug session alive OR <24h old).
+
+    Why: within one running Chrome debug session the user has already curated their
+    eligible list — a token refresh shouldn't force a ~30s re-enrichment loop.
+    Once Chrome is killed, fall back to the age-based freshness rule.
+    """
+    if not cache or cache.get("principalId") != principal_id:
+        return False
+    if chrome_port_alive:
+        return True
+    return is_fresh(cache, principal_id)
+
+
 def save(principal_id: str, eligible: list[dict]) -> None:
     payload = {
         "fetchedAt": datetime.now(UTC).isoformat(),
