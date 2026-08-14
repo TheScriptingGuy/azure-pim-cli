@@ -124,7 +124,11 @@ class GraphClient:
         retry_ids: set[str] = set()
         max_retry_after = 0
         for r in all_responses:
-            rid = r.get("id")
+            # Graph echoes the caller-supplied id back; without one there is no
+            # key to file the result under, so the sub-response is unusable.
+            if r.get("id") is None:
+                continue
+            rid = str(r["id"])
             status = r.get("status", 0)
             if status == 429:
                 retry_ids.add(rid)
@@ -140,7 +144,9 @@ class GraphClient:
             retry_reqs = [r for r in requests if r["id"] in retry_ids]
             chunks = [retry_reqs[i : i + 20] for i in range(0, len(retry_reqs), 20)]
             for r in [x for group in await _run(chunks) for x in group]:
-                rid = r.get("id")
+                if r.get("id") is None:
+                    continue
+                rid = str(r["id"])
                 status = r.get("status", 0)
                 results[rid] = r.get("body") or {} if 200 <= status < 300 else None
 

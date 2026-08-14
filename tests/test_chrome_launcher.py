@@ -15,13 +15,13 @@ class TestPortAlive:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_resp.status = 200
         with patch("urllib.request.urlopen", return_value=mock_resp):
-            assert launcher._port_alive(9222) is True
+            assert launcher.port_alive(9222) is True
 
     def test_returns_false_on_connection_error(self) -> None:
         import urllib.error
 
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
-            assert launcher._port_alive(9222) is False
+            assert launcher.port_alive(9222) is False
 
 
 class TestKillChrome:
@@ -50,9 +50,47 @@ class TestChromeExe:
                 launcher._chrome_exe()
 
 
+class TestChromeExeCandidates:
+    def test_returns_first_existing_path(self) -> None:
+        first = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        with patch("os.path.isfile", side_effect=lambda p: p == first):
+            assert launcher._chrome_exe() == first
+
+
+class TestDefaultSourceProfile:
+    def test_builds_path_under_localappdata(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        assert launcher._default_source_profile() == tmp_path / "Google" / "Chrome" / "User Data"
+
+
+class TestWaitReady:
+    def test_returns_true_as_soon_as_port_answers(self) -> None:
+        with patch.object(launcher, "port_alive", side_effect=[False, True]) as alive:
+            with patch("time.sleep"):
+                assert launcher._wait_ready(9222, timeout=5) is True
+        assert alive.call_count == 2
+
+    def test_returns_false_once_deadline_passes(self) -> None:
+        with patch.object(launcher, "port_alive", return_value=False):
+            assert launcher._wait_ready(9222, timeout=0) is False
+
+
+class TestCopyProfile:
+    def test_invokes_robocopy_with_target_created(self, tmp_path: Path) -> None:
+        src = tmp_path / "src"
+        dst = tmp_path / "nested" / "dst"
+        with patch("subprocess.run") as mock_run:
+            launcher._copy_profile(src, dst)
+        assert dst.parent.is_dir(), "parent of the copy target must exist before robocopy runs"
+        argv = mock_run.call_args[0][0]
+        assert argv[0] == "robocopy"
+        assert str(src) in argv and str(dst) in argv
+        assert "/E" in argv and "/XJ" in argv
+
+
 class TestLaunchDebugChrome:
     def test_fast_path_when_port_alive(self) -> None:
-        with patch.object(launcher, "_port_alive", return_value=True):
+        with patch.object(launcher, "port_alive", return_value=True):
             endpoint = launcher.launch_debug_chrome(port=9222)
         assert endpoint == "http://localhost:9222"
 
@@ -66,7 +104,7 @@ class TestLaunchDebugChrome:
         port_responses = [False, True]  # not alive → launch → alive
 
         with (
-            patch.object(launcher, "_port_alive", side_effect=port_responses),
+            patch.object(launcher, "port_alive", side_effect=port_responses),
             patch.object(launcher, "_kill_chrome"),
             patch.object(launcher, "_copy_profile"),
             patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),
@@ -93,7 +131,7 @@ class TestLaunchDebugChrome:
         dst = tmp_path / "dst"
 
         with (
-            patch.object(launcher, "_port_alive", side_effect=[False, True]),
+            patch.object(launcher, "port_alive", side_effect=[False, True]),
             patch.object(launcher, "_kill_chrome"),
             patch.object(launcher, "_copy_profile"),
             patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),
@@ -114,7 +152,7 @@ class TestLaunchDebugChrome:
         dst = tmp_path / "dst"
 
         with (
-            patch.object(launcher, "_port_alive", return_value=False),
+            patch.object(launcher, "port_alive", return_value=False),
             patch.object(launcher, "_kill_chrome"),
             patch.object(launcher, "_copy_profile"),
             patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),
@@ -123,3 +161,70 @@ class TestLaunchDebugChrome:
             pytest.raises(RuntimeError, match="not responding"),
         ):
             launcher.launch_debug_chrome(port=9222, copy_profile=dst, source_profile=source)
+
+    def test_force_refresh_restarts_a_live_chrome(self, tmp_path: Path) -> None:
+        fake_exe = tmp_path / "chrome.exe"
+        fake_exe.touch()
+        source = tmp_path / "src"
+        source.mkdir()
+        dst = tmp_path / "dst"
+
+        with (
+            patch.object(launcher, "port_alive", return_value=True),
+            patch.object(launcher, "_kill_chrome") as kill,
+            patch.object(launcher, "_copy_profile") as copy_profile,
+            patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),
+            patch.object(launcher, "_wait_ready", return_value=True),
+            patch("time.sleep"),
+            patch("subprocess.Popen"),
+        ):
+            endpoint = launcher.launch_debug_chrome(
+                port=9222,
+                copy_profile=dst,
+                source_profile=source,
+                force_profile_refresh=True,
+            )
+
+        assert endpoint == "http://localhost:9222"
+        kill.assert_called_once()
+        copy_profile.assert_called_once(), "a forced refresh must re-copy the profile"
+
+    def test_reuses_existing_profile_copy(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        fake_exe = tmp_path / "chrome.exe"
+        fake_exe.touch()
+        source = tmp_path / "src"
+        source.mkdir()
+        dst = tmp_path / "dst"
+        dst.mkdir()
+        (dst / "Preferences").write_text("{}", encoding="utf-8")
+
+        with (
+            patch.object(launcher, "port_alive", side_effect=[False, True]),
+            patch.object(launcher, "_kill_chrome"),
+            patch.object(launcher, "_copy_profile") as copy_profile,
+            patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),
+            patch.object(launcher, "_wait_ready", return_value=True),
+            patch("time.sleep"),
+            patch("subprocess.Popen"),
+        ):
+            launcher.launch_debug_chrome(port=9222, copy_profile=dst, source_profile=source)
+
+        copy_profile.assert_not_called()
+        assert "reusing existing profile copy" in capsys.readouterr().err
+
+    def test_missing_source_profile_raises(self, tmp_path: Path) -> None:
+        fake_exe = tmp_path / "chrome.exe"
+        fake_exe.touch()
+
+        with (
+            patch.object(launcher, "port_alive", return_value=False),
+            patch.object(launcher, "_kill_chrome"),
+            patch.object(launcher, "_chrome_exe", return_value=str(fake_exe)),
+            patch("time.sleep"),
+            pytest.raises(RuntimeError, match="source profile not found"),
+        ):
+            launcher.launch_debug_chrome(
+                port=9222,
+                copy_profile=tmp_path / "dst",
+                source_profile=tmp_path / "missing",
+            )
