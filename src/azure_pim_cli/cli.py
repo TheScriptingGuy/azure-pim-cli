@@ -530,6 +530,21 @@ async def _run_with_client(args: argparse.Namespace, gc: GraphClient, cdp_endpoi
         )
         console.print("[cyan]Auto-priming acrs=c1 via portal (driving one dummy activation)...[/cyan]")
 
+        # Lazy Chrome launch: when --token was passed (or --no-auto-cdp), cdp_endpoint is
+        # None on entry. launch_debug_chrome is idempotent — attaches if Chrome already
+        # listens on the port. Without this the prime path silently fell back to manual.
+        if not cdp_endpoint:
+            try:
+                from pathlib import Path as _Path
+
+                cdp_endpoint = await asyncio.to_thread(
+                    launch_debug_chrome,
+                    port=args.auto_cdp_port,
+                    copy_profile=_Path(args.auto_cdp_profile),
+                )
+            except Exception as e:
+                console.print(f"[red]Chrome launch for acrs prime failed: {e}[/red]")
+
         new_token: str | None = None
         if cdp_endpoint:
             try:
